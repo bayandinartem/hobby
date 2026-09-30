@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="theme-color" content="#0c543f">
+	<title>Косынка</title>
+	<link rel="stylesheet" href="./styles.css">
+	<script src="./main.js" type="module"></script>
+</head>
+<body>
+	<main class="app">
+		<header class="game-header">
+			<div>
+				<p class="eyebrow">Пасьянс</p>
+				<h1>Косынка</h1>
+			</div>
+			<div class="game-controls">
+				<p class="move-counter">Ходы: <output id="move-count">0</output></p>
+				<button class="control-button secondary-button" id="undo" type="button" disabled>Отменить ход</button>
+				<button class="control-button" id="new-game" type="button">Новая игра</button>
+			</div>
+		</header>
+		<p class="instructions">Выберите карту, затем место назначения. Перетаскивание тоже работает.</p>
+		<section aria-label="Игровое поле" class="board" id="board"></section>
+		<p aria-live="polite" class="game-status" id="game-status">Раздача готова. Удачной игры!</p>
+	</main>
+</body>
+</html>
