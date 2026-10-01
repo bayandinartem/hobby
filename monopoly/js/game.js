@@ -1,16 +1,20 @@
 import { board, cards, groups } from "./data.js";
+import { getCardText, getTileName, resolveLocale, translate } from "./i18n.js";
 
 const startingMoney = 1500;
 const startBonus = 200;
 
-export function createGame(playerNames) {
+export function createGame(playerNames, { random = Math.random, locale = "ru" } = {}) {
+  const gameLocale = resolveLocale(locale);
   if (playerNames.length < 2 || playerNames.length > 4) {
-    throw new Error("Для партии нужно от 2 до 4 игроков.");
+    throw new Error(translate(gameLocale, "game.playerCount"));
   }
+  if (typeof random !== "function") throw new TypeError(translate(gameLocale, "game.rngFunction"));
   const names = playerNames.map(name => name.trim());
-  if (names.some(name => !name)) throw new Error("У каждого игрока должно быть имя.");
+  if (names.some(name => !name)) throw new Error(translate(gameLocale, "game.emptyPlayerName"));
 
   return {
+    locale: gameLocale,
     players: names.map((name, index) => ({
       id: index,
       name,
@@ -26,24 +30,25 @@ export function createGame(playerNames) {
     properties: board.map(() => ({ owner: null, houses: 0, mortgaged: false })),
     currentPlayer: 0,
     phase: "roll",
+    pendingTrade: null,
     dice: [0, 0],
     lastRollTotal: 0,
     doublesCount: 0,
-    message: "Бросьте кубики, чтобы начать ход.",
+    message: translate(gameLocale, "game.startMessage"),
     pendingTile: null,
     winner: null,
     cardDecks: {
-      chance: shuffled(cards.chance),
-      chest: shuffled(cards.chest)
+      chance: shuffled(cards.chance, random),
+      chest: shuffled(cards.chest, random)
     },
     cardIndices: { chance: 0, chest: 0 }
   };
 }
 
-function shuffled(source) {
+function shuffled(source, random) {
   const deck = [...source];
   for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;
@@ -53,11 +58,11 @@ export function activePlayer(game) {
   return game.players[game.currentPlayer];
 }
 
-export function rollDice(game) {
+export function rollDice(game, random = Math.random) {
   if (game.phase !== "roll") return;
   const player = activePlayer(game);
-  const first = die();
-  const second = die();
+  const first = die(random);
+  const second = die(random);
   game.dice = [first, second];
   game.lastRollTotal = first + second;
   const isDouble = first === second;
@@ -85,10 +90,10 @@ export function rollDice(game) {
       player.inJail = false;
       player.jailTurns = 0;
       movePlayer(game, player, game.lastRollTotal, false);
-      game.message = `${player.name} платит 50 монет и покидает подземелье.`;
+      game.message = translate(game.locale, "game.rollJailFine", { name: player.name });
       resolveLanding(game, player, false);
     } else {
-      game.message = `${player.name} остаётся в подземелье. Выпало ${first} и ${second}.`;
+      game.message = translate(game.locale, "game.jailRemain", { name: player.name, first, second });
       finishAction(game);
     }
     return;
@@ -98,8 +103,8 @@ export function rollDice(game) {
   resolveLanding(game, player, isDouble);
 }
 
-function die() {
-  return Math.floor(Math.random() * 6) + 1;
+function die(random) {
+  return Math.floor(random() * 6) + 1;
 }
 
 function movePlayer(game, player, steps, collectStart) {
@@ -107,14 +112,14 @@ function movePlayer(game, player, steps, collectStart) {
   player.position = (player.position + steps) % board.length;
   if (collectStart && oldPosition + steps >= board.length) {
     player.money += startBonus;
-    game.message = `${player.name} проходит городские ворота и получает ${startBonus} монет.`;
+    game.message = translate(game.locale, "game.collectStart", { name: player.name, amount: startBonus });
   }
 }
 
 function resolveLanding(game, player, isDouble) {
   const index = player.position;
   const tile = board[index];
-  const placeMessage = `${player.name} прибывает: «${tile.name}».`;
+  const placeMessage = translate(game.locale, "game.arrive", { name: player.name, tile: getTileName(game.locale, tile.translationKey) });
   game.pendingTile = null;
 
   switch (tile.type) {
@@ -125,7 +130,7 @@ function resolveLanding(game, player, isDouble) {
       break;
     case "tax":
       player.money -= tile.amount;
-      game.message = `${placeMessage} Уплачена подать ${tile.amount} монет.`;
+      game.message = translate(game.locale, "game.tax", { place: placeMessage, amount: tile.amount });
       finishAction(game);
       break;
     case "chance":
@@ -136,11 +141,11 @@ function resolveLanding(game, player, isDouble) {
       sendToJail(game, player);
       break;
     case "jail":
-      game.message = `${placeMessage} Пока вы здесь только в гостях.`;
+      game.message = translate(game.locale, "game.jailVisit", { place: placeMessage });
       finishAction(game);
       break;
     case "free":
-      game.message = `${placeMessage} Отдохните на королевском празднике.`;
+      game.message = translate(game.locale, "game.free", { place: placeMessage });
       finishAction(game);
       break;
     default:
@@ -155,28 +160,31 @@ function resolvePurchaseOrRent(game, player, index, tile) {
   if (land.owner === null) {
     game.pendingTile = index;
     game.phase = "buy";
-    game.message = `«${tile.name}» свободно и стоит ${tile.price} монет.`;
+    game.message = translate(game.locale, "game.buyAvailable", { tile: getTileName(game.locale, tile.translationKey), price: tile.price });
     return;
   }
   if (land.owner === player.id || land.mortgaged) {
-    game.message = land.mortgaged ? `«${tile.name}» заложено, рента не взимается.` : `Вы прибыли в собственное владение «${tile.name}».`;
+    game.message = land.mortgaged
+      ? translate(game.locale, "game.mortgagedRent", { tile: getTileName(game.locale, tile.translationKey) })
+      : translate(game.locale, "game.ownProperty", { tile: getTileName(game.locale, tile.translationKey) });
     finishAction(game);
     return;
   }
 
   const owner = game.players[land.owner];
-  let rent = rentFor(game, index);
+  let rent;
   if (tile.type === "utility") {
     const ownedCount = ownedTiles(game, owner.id).filter(i => board[i].type === "utility").length;
     rent = game.lastRollTotal * (ownedCount === 2 ? 10 : 4);
-  }
-  if (tile.type === "rail") {
+  } else if (tile.type === "rail") {
     const ownedCount = ownedTiles(game, owner.id).filter(i => board[i].type === "rail").length;
     rent = [0, 25, 50, 100, 200][ownedCount];
+  } else {
+    rent = rentFor(game, index);
   }
   player.money -= rent;
   owner.money += rent;
-  game.message = `${player.name} платит ${rent} монет ренты игроку ${owner.name}.`;
+  game.message = translate(game.locale, "game.rentPaid", { name: player.name, rent, owner: owner.name });
   finishAction(game);
 }
 
@@ -192,7 +200,7 @@ function rentFor(game, index) {
 
 function resolveCardLanding(game, player, tile, placeMessage, isDouble) {
   const card = drawCard(game, tile.type, player);
-  const cardMessage = `${placeMessage} ${card.text}`;
+  const cardMessage = `${placeMessage} ${getCardText(game.locale, card)}`;
   const effect = card.effect;
   if (effect.kind === "money") player.money += effect.amount;
   if (effect.kind === "repair") {
@@ -236,7 +244,7 @@ function drawCard(game, type, player) {
 function grantDoubleRoll(game, player, isDouble) {
   if (game.phase === "end" && isDouble && game.doublesCount < 3 && !player.inJail) {
     game.phase = "roll";
-    game.message += " Дубль! Бросьте ещё раз.";
+    game.message += translate(game.locale, "game.double");
   }
 }
 
@@ -245,19 +253,19 @@ export function buyProperty(game) {
   const player = activePlayer(game);
   const tile = board[game.pendingTile];
   if (player.money < tile.price) {
-    game.message = `Недостаточно монет для покупки «${tile.name}».`;
+    game.message = translate(game.locale, "game.cannotAfford", { tile: getTileName(game.locale, tile.translationKey) });
     return;
   }
   player.money -= tile.price;
   game.properties[game.pendingTile].owner = player.id;
-  game.message = `${player.name} приобретает «${tile.name}».`;
+  game.message = translate(game.locale, "game.bought", { name: player.name, tile: getTileName(game.locale, tile.translationKey) });
   afterLanding(game, player);
 }
 
 export function skipPurchase(game) {
   if (game.phase !== "buy") return;
   const player = activePlayer(game);
-  game.message = `${player.name} отказывается от покупки.`;
+  game.message = translate(game.locale, "game.declined", { name: player.name });
   afterLanding(game, player);
 }
 
@@ -278,12 +286,12 @@ function finishAction(game) {
         land.mortgaged = false;
       }
     }
-    game.message += ` ${player.name} обанкротился и выбывает из игры.`;
+    game.message += translate(game.locale, "game.bankrupt", { name: player.name });
     const remaining = game.players.filter(candidate => !candidate.bankrupt);
     if (remaining.length === 1) {
       game.winner = remaining[0].id;
       game.phase = "finished";
-      game.message += ` Победитель — ${remaining[0].name}!`;
+      game.message += translate(game.locale, "game.winnerMessage", { name: remaining[0].name });
       return;
     }
   }
@@ -299,7 +307,7 @@ export function endTurn(game) {
   game.currentPlayer = next;
   game.doublesCount = 0;
   game.phase = "roll";
-  game.message = `Ход игрока ${activePlayer(game).name}. Бросьте кубики.`;
+  game.message = translate(game.locale, "game.nextPlayer", { name: activePlayer(game).name });
 }
 
 export function buildHouse(game, index) {
@@ -338,6 +346,78 @@ export function unmortgageProperty(game, index) {
   return true;
 }
 
+export function proposePropertySale(game, index, buyerId, price) {
+  return proposePropertyTrade(game, index, buyerId, price, "sale");
+}
+
+export function proposePropertyPurchase(game, index, buyerId, price) {
+  return proposePropertyTrade(game, index, buyerId, price, "purchase");
+}
+
+function proposePropertyTrade(game, index, buyerId, price, kind) {
+  const tile = Number.isInteger(index) ? board[index] : null;
+  const land = tile ? game.properties[index] : null;
+  const seller = land && land.owner !== null ? game.players[land.owner] : null;
+  const buyer = Number.isInteger(buyerId) ? game.players[buyerId] : null;
+  if (
+    game.phase === "finished" || game.pendingTrade || !seller || seller.bankrupt ||
+    !tile || !["property", "rail", "utility"].includes(tile.type) ||
+    !buyer || buyer.id === seller.id || buyer.bankrupt || land.mortgaged ||
+    !Number.isSafeInteger(price) || price <= 0
+  ) return false;
+
+  game.pendingTrade = { kind, tile: index, sellerId: seller.id, buyerId: buyer.id, price };
+  game.message = translate(game.locale, kind === "purchase" ? "trade.purchaseOffered" : "trade.offered", {
+    seller: seller.name,
+    buyer: buyer.name,
+    tile: getTileName(game.locale, board[index].translationKey),
+    price
+  });
+  return true;
+}
+
+export function acceptPropertySale(game) {
+  const offer = game.pendingTrade;
+  if (!offer) return false;
+  const buyer = game.players[offer.buyerId];
+  const seller = game.players[offer.sellerId];
+  const tile = Number.isInteger(offer.tile) ? board[offer.tile] : null;
+  const land = tile ? game.properties[offer.tile] : null;
+  if (
+    !buyer || buyer.bankrupt || !seller || seller.bankrupt ||
+    !tile || !["property", "rail", "utility"].includes(tile.type) || !land ||
+    land.owner !== seller.id || land.mortgaged ||
+    !Number.isSafeInteger(offer.price) || offer.price <= 0 || buyer.money < offer.price
+  ) {
+    game.message = translate(game.locale, "trade.cannotAccept", { buyer: buyer?.name ?? "" });
+    return false;
+  }
+
+  buyer.money -= offer.price;
+  seller.money += offer.price;
+  land.owner = buyer.id;
+  game.pendingTrade = null;
+  game.message = translate(game.locale, offer.kind === "purchase" ? "trade.purchaseCompleted" : "trade.completed", {
+    seller: seller.name,
+    buyer: buyer.name,
+    tile: getTileName(game.locale, board[offer.tile].translationKey),
+    price: offer.price
+  });
+  return true;
+}
+
+export function rejectPropertySale(game) {
+  const offer = game.pendingTrade;
+  if (!offer) return false;
+  game.pendingTrade = null;
+  game.message = translate(game.locale, offer.kind === "purchase" ? "trade.purchaseRejected" : "trade.rejected", {
+    seller: game.players[offer.sellerId].name,
+    buyer: game.players[offer.buyerId].name,
+    tile: getTileName(game.locale, board[offer.tile].translationKey)
+  });
+  return true;
+}
+
 export function useJailCard(game) {
   const player = activePlayer(game);
   if (!player.inJail || !player.getOutOfJail) return false;
@@ -348,7 +428,7 @@ export function useJailCard(game) {
   player.inJail = false;
   player.jailTurns = 0;
   game.phase = "roll";
-  game.message = `${player.name} использует карту освобождения. Бросьте кубики.`;
+  game.message = translate(game.locale, "game.jailCardUsed", { name: player.name });
   return true;
 }
 
@@ -359,7 +439,7 @@ export function payJailFine(game) {
   player.inJail = false;
   player.jailTurns = 0;
   game.phase = "roll";
-  game.message = `${player.name} уплачивает 50 монет и выходит из подземелья.`;
+  game.message = translate(game.locale, "game.jailFinePaid", { name: player.name });
   return true;
 }
 
@@ -382,7 +462,7 @@ function sendToJail(game, player) {
   player.inJail = true;
   player.jailTurns = 0;
   game.doublesCount = 0;
-  game.message = `${player.name} отправлен в подземелье.`;
+  game.message = translate(game.locale, "game.sentToJail", { name: player.name });
   finishAction(game);
 }
 

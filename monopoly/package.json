@@ -1,0 +1,11 @@
+{
+  "name": "korolevstvo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/run.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
